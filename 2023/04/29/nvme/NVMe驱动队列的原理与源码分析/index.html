@@ -1,0 +1,653 @@
+
+
+<!DOCTYPE html>
+<html lang="zh-CN" data-default-color-scheme=auto>
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/fluid.png">
+  <link rel="icon" href="/img/fluid.png">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="author" content="John Doe">
+  <meta name="keywords" content="">
+  
+    <meta name="description" content="NVMe驱动队列的原理与源码分析我们将基于linux 4.20的NVMe over PCIe驱动代码来分析NVMe驱动如何操作队列，块驱动在处理上层块层发送下来的IO时涉及到命令的申请与转换、存储命令的队列、怎样将命令交给盘、怎样接收盘处理的命令结果等一系列问题。 NVMe创建队列NVMe创建队列时需要考虑两个重要的参数，一是创建多少个，二是每个队列的深度。NVMe的一个队列是由一个或者多个Sub">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Cahir">
+<meta property="og:url" content="http://example.com/2023/04/29/nvme/NVMe%E9%A9%B1%E5%8A%A8%E9%98%9F%E5%88%97%E7%9A%84%E5%8E%9F%E7%90%86%E4%B8%8E%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/index.html">
+<meta property="og:site_name" content="Cahir">
+<meta property="og:description" content="NVMe驱动队列的原理与源码分析我们将基于linux 4.20的NVMe over PCIe驱动代码来分析NVMe驱动如何操作队列，块驱动在处理上层块层发送下来的IO时涉及到命令的申请与转换、存储命令的队列、怎样将命令交给盘、怎样接收盘处理的命令结果等一系列问题。 NVMe创建队列NVMe创建队列时需要考虑两个重要的参数，一是创建多少个，二是每个队列的深度。NVMe的一个队列是由一个或者多个Sub">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="http://example.com/assets/image-20211002144735841.png">
+<meta property="og:image" content="http://example.com/assets/image-20211002150509788.png">
+<meta property="article:published_time" content="2023-04-29T03:22:37.275Z">
+<meta property="article:modified_time" content="2023-04-29T03:22:37.275Z">
+<meta property="article:author" content="John Doe">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="http://example.com/assets/image-20211002144735841.png">
+  
+  
+  
+  <title>Cahir</title>
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/twitter-bootstrap/4.6.1/css/bootstrap.min.css" />
+
+
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/github-markdown-css/4.0.0/github-markdown.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/hint.css/2.7.0/hint.min.css" />
+
+  <link  rel="stylesheet" href="https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.css" />
+
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+<!-- Do not modify the link that theme dependent icons -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_hj8rtnfg7um.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_lbnruvf0jn.css">
+
+
+<link  rel="stylesheet" href="/css/main.css" />
+
+
+  <link id="highlight-css" rel="stylesheet" href="/css/highlight.css" />
+  
+    <link id="highlight-css-dark" rel="stylesheet" href="/css/highlight-dark.css" />
+  
+
+
+
+
+  <script id="fluid-configs">
+    var Fluid = window.Fluid || {};
+    Fluid.ctx = Object.assign({}, Fluid.ctx)
+    var CONFIG = {"hostname":"example.com","root":"/","version":"1.9.4","typing":{"enable":true,"typeSpeed":70,"cursorChar":"_","loop":false,"scope":[]},"anchorjs":{"enable":true,"element":"h1,h2,h3,h4,h5,h6","placement":"left","visible":"hover","icon":""},"progressbar":{"enable":true,"height_px":3,"color":"#29d","options":{"showSpinner":false,"trickleSpeed":100}},"code_language":{"enable":true,"default":"TEXT"},"copy_btn":true,"image_caption":{"enable":true},"image_zoom":{"enable":true,"img_url_replace":["",""]},"toc":{"enable":true,"placement":"right","headingSelector":"h1,h2,h3,h4,h5,h6","collapseDepth":0},"lazyload":{"enable":true,"loading_img":"/img/loading.gif","onlypost":false,"offset_factor":2},"web_analytics":{"enable":false,"follow_dnt":true,"baidu":null,"google":null,"gtag":null,"tencent":{"sid":null,"cid":null},"woyaola":null,"cnzz":null,"leancloud":{"app_id":null,"app_key":null,"server_url":null,"path":"window.location.pathname","ignore_local":false}},"search_path":"/local-search.xml"};
+
+    if (CONFIG.web_analytics.follow_dnt) {
+      var dntVal = navigator.doNotTrack || window.doNotTrack || navigator.msDoNotTrack;
+      Fluid.ctx.dnt = dntVal && (dntVal.startsWith('1') || dntVal.startsWith('yes') || dntVal.startsWith('on'));
+    }
+  </script>
+  <script  src="/js/utils.js" ></script>
+  <script  src="/js/color-schema.js" ></script>
+  
+
+
+  
+<meta name="generator" content="Hexo 6.3.0"></head>
+
+
+<body>
+  
+
+  <header>
+    
+
+<div class="header-inner" style="height: 70vh;">
+  <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand" href="/">
+      <strong>Cahir</strong>
+    </a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                <span>首页</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                <span>归档</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                <span>分类</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                <span>标签</span>
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/about/">
+                <i class="iconfont icon-user-fill"></i>
+                <span>关于</span>
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" target="_self" href="javascript:;" data-toggle="modal" data-target="#modalSearch" aria-label="Search">
+              <i class="iconfont icon-search"></i>
+            </a>
+          </li>
+          
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" target="_self" href="javascript:;" aria-label="Color Toggle">
+              <i class="iconfont icon-dark" id="color-toggle-icon"></i>
+            </a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+  
+
+<div id="banner" class="banner" parallax=true
+     style="background: url('/img/default.png') no-repeat center center; background-size: cover;">
+  <div class="full-bg-img">
+    <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+      <div class="banner-text text-center fade-in-up">
+        <div class="h2">
+          
+            <span id="subtitle" data-typed-text=""></span>
+          
+        </div>
+
+        
+          
+  <div class="mt-3">
+    
+    
+      <span class="post-meta">
+        <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+        <time datetime="2023-04-29 11:22" pubdate>
+          2023年4月29日 上午
+        </time>
+      </span>
+    
+  </div>
+
+  <div class="mt-1">
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-chart"></i>
+        
+          4.5k 字
+        
+      </span>
+    
+
+    
+      <span class="post-meta mr-2">
+        <i class="iconfont icon-clock-fill"></i>
+        
+        
+        
+          38 分钟
+        
+      </span>
+    
+
+    
+    
+  </div>
+
+
+        
+      </div>
+
+      
+    </div>
+  </div>
+</div>
+
+</div>
+
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid nopadding-x">
+  <div class="row nomargin-x">
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+
+    </div>
+
+    <div class="col-lg-8 nopadding-x-md">
+      <div class="container nopadding-x-md" id="board-ctn">
+        <div id="board">
+          <article class="post-content mx-auto">
+            <!-- SEO header -->
+            <h1 style="display: none"></h1>
+            
+            
+              <div class="markdown-body">
+                
+                <h1 id="NVMe驱动队列的原理与源码分析"><a href="#NVMe驱动队列的原理与源码分析" class="headerlink" title="NVMe驱动队列的原理与源码分析"></a>NVMe驱动队列的原理与源码分析</h1><p>我们将基于linux 4.20的NVMe over PCIe驱动代码来分析NVMe驱动如何操作队列，块驱动在处理上层块层发送下来的IO时涉及到命令的申请与转换、存储命令的队列、怎样将命令交给盘、怎样接收盘处理的命令结果等一系列问题。</p>
+<h2 id="NVMe创建队列"><a href="#NVMe创建队列" class="headerlink" title="NVMe创建队列"></a>NVMe创建队列</h2><p>NVMe创建队列时需要考虑两个重要的参数，一是创建多少个，二是每个队列的深度。NVMe的一个队列是由一个或者多个Submission Queue(SQ)和一个Completion Queue(CQ)组成的，因此也可以叫做队列对(queue pair)，为了方便后续还是叫其队列。</p>
+<p>NVMe驱动首先会创建一个Admin Queue用于下发管理类的命令：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">static</span> <span class="hljs-type">int</span> <span class="hljs-title function_">nvme_pci_configure_admin_queue</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> nvme_dev *dev)</span><br>&#123;<br>	<span class="hljs-type">int</span> result;<br>	u32 aqa;<br>	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">nvme_queue</span> *<span class="hljs-title">nvmeq</span>;</span><br>	<span class="hljs-comment">/* ...... */</span><br>	<span class="hljs-comment">// Admin queue的队列深度固定为32，queue id固定为0</span><br>	result = nvme_alloc_queue(dev, <span class="hljs-number">0</span>, NVME_AQ_DEPTH);<br>	<span class="hljs-keyword">if</span> (result)<br>		<span class="hljs-keyword">return</span> result;<br><br>	nvmeq = &amp;dev-&gt;queues[<span class="hljs-number">0</span>];<br>	<span class="hljs-comment">/* ...... */</span><br><br>	nvmeq-&gt;cq_vector = <span class="hljs-number">0</span>;<br>	nvme_init_queue(nvmeq, <span class="hljs-number">0</span>); <span class="hljs-comment">// 初始化Admin queue</span><br>	result = queue_request_irq(nvmeq); <span class="hljs-comment">// 注册中断处理函数</span><br>	<span class="hljs-keyword">if</span> (result) &#123;<br>		nvmeq-&gt;cq_vector = <span class="hljs-number">-1</span>;<br>		<span class="hljs-keyword">return</span> result;<br>	&#125;<br><br>	<span class="hljs-keyword">return</span> result;<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>然后创建用于下发IO命令的IO queue：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">static</span> <span class="hljs-type">void</span> <span class="hljs-title function_">nvme_reset_work</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> work_struct *work)</span><br>&#123;<br>    <span class="hljs-comment">/* ...... */</span><br>	result = nvme_setup_io_queues(dev); <span class="hljs-comment">//创建nvme的IO队列（本地和盘都要创建）</span><br>	<span class="hljs-keyword">if</span> (result)<br>		<span class="hljs-keyword">goto</span> out;<br>    <span class="hljs-comment">/* ...... */</span><br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>nvme_setup_io_queues()函数：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">static</span> <span class="hljs-type">int</span> <span class="hljs-title function_">nvme_setup_io_queues</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> nvme_dev *dev)</span><br>&#123;<br>	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">nvme_queue</span> *<span class="hljs-title">adminq</span> =</span> &amp;dev-&gt;queues[<span class="hljs-number">0</span>];<br>	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">pci_dev</span> *<span class="hljs-title">pdev</span> =</span> to_pci_dev(dev-&gt;dev);<br>	<span class="hljs-type">int</span> result, nr_io_queues;<br>	<span class="hljs-type">unsigned</span> <span class="hljs-type">long</span> size;<br><br>	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">irq_affinity</span> <span class="hljs-title">affd</span> =</span> &#123;<br>		.pre_vectors = <span class="hljs-number">1</span><br>	&#125;;<br>	<span class="hljs-comment">// 首先获取当前系统的CPU个数</span><br>	nr_io_queues = num_possible_cpus();<br>	result = nvme_set_queue_count(&amp;dev-&gt;ctrl, &amp;nr_io_queues);<br>	<span class="hljs-keyword">if</span> (result &lt; <span class="hljs-number">0</span>)<br>		<span class="hljs-keyword">return</span> result;<br>    <span class="hljs-comment">/* ...... */</span><br>    dev-&gt;max_qid = max(result - <span class="hljs-number">1</span>, <span class="hljs-number">1</span>); <span class="hljs-comment">// </span><br>    <span class="hljs-comment">/* ...... */</span><br>    <span class="hljs-keyword">return</span> nvme_create_io_queues(dev); <span class="hljs-comment">// 循环遍历一个一个地创建队列</span><br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>nvme_set_queue_count()函数决定要创建的IO queue的队列个数：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">int</span> <span class="hljs-title function_">nvme_set_queue_count</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> nvme_ctrl *ctrl, <span class="hljs-type">int</span> *count)</span><br>&#123;<br>    <span class="hljs-comment">// 根据协议q_count的高16位是CQ的个数，低16位是SQ的个数</span><br>	u32 q_count = (*count - <span class="hljs-number">1</span>) | ((*count - <span class="hljs-number">1</span>) &lt;&lt; <span class="hljs-number">16</span>);<br>	u32 result;<br>	<span class="hljs-type">int</span> status, nr_io_queues;<br>	<span class="hljs-comment">// 发送set feature命令设置queue的数量并且返回controller(这里可以直接理解为盘)支持的最大的队列数result。</span><br>	status = nvme_set_features(ctrl, NVME_FEAT_NUM_QUEUES, q_count, <span class="hljs-literal">NULL</span>, <span class="hljs-number">0</span>,<br>			&amp;result);<br>	<span class="hljs-keyword">if</span> (status &lt; <span class="hljs-number">0</span>)<br>		<span class="hljs-keyword">return</span> status;<br><br>	<span class="hljs-comment">/*</span><br><span class="hljs-comment">	 * Degraded controllers might return an error when setting the queue</span><br><span class="hljs-comment">	 * count.  We still want to be able to bring them online and offer</span><br><span class="hljs-comment">	 * access to the admin queue, as that might be only way to fix them up.</span><br><span class="hljs-comment">	 */</span><br>	<span class="hljs-keyword">if</span> (status &gt; <span class="hljs-number">0</span>) &#123;<br>		dev_err(ctrl-&gt;device, <span class="hljs-string">&quot;Could not set queue count (%d)\n&quot;</span>, status);<br>		*count = <span class="hljs-number">0</span>;<br>	&#125; <span class="hljs-keyword">else</span> &#123;<br>        <span class="hljs-comment">// 大概率返回的SQ和CQ个数是一样的，但也有可能不一样，因此这里取一下最小值</span><br>		nr_io_queues = min(result &amp; <span class="hljs-number">0xffff</span>, result &gt;&gt; <span class="hljs-number">16</span>) + <span class="hljs-number">1</span>;<br>		*count = min(*count, nr_io_queues); <span class="hljs-comment">// 找到cpu个数与盘能够支持的队列数量的最小值</span><br>	&#125;<br><br>	<span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>nvme_set_queue_count()函数的第23行为什么要将结果加1？</p>
+<p>查看协议可知result的高16位和低16位都是一个“0&#96;s based value”，也就是说如果要表达支持n个队列，那么返回的值位n-1（NVMe协议里经常这样定义），因此最后nr_io_queues要加1才是最终的结果。</p>
+<p><img src="/assets/image-20211002144735841.png" srcset="/img/loading.gif" lazyload alt="image-20211002144735841"></p>
+<p>队列深度的确定：</p>
+<p>在nvme_pci_enable()函数初始化队列深度：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">static</span> <span class="hljs-type">int</span> <span class="hljs-title function_">nvme_pci_enable</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> nvme_dev *dev)</span><br>&#123;<br>    <span class="hljs-comment">/* ...... */</span><br>    <span class="hljs-comment">// cap寄存器里面存的是controller最基本的能力信息</span><br>    dev-&gt;ctrl.cap = lo_hi_readq(dev-&gt;bar + NVME_REG_CAP);<br>    <span class="hljs-comment">// 查看协议可知cap的低16位表示的是支持的最大的队列的entry数，这也是个“0`s based value”，因此这里需要加1</span><br>    <span class="hljs-comment">// 这里取了和1024比较的最小值</span><br>	dev-&gt;q_depth = <span class="hljs-type">min_t</span>(<span class="hljs-type">int</span>, NVME_CAP_MQES(dev-&gt;ctrl.cap) + <span class="hljs-number">1</span>,<br>				io_queue_depth);    <br>    <span class="hljs-comment">/* ...... */</span><br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p><img src="/assets/image-20211002150509788.png" srcset="/img/loading.gif" lazyload alt="image-20211002150509788"></p>
+<p>在调用nvme_alloc_queue()函数创建队列时会用到两个宏表明了SQ和CQ的总大小，可以看出SQ存放的是nvme的命令，而CQ存放的是controller的处理结果。</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-meta">#<span class="hljs-keyword">define</span> SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))</span><br><span class="hljs-meta">#<span class="hljs-keyword">define</span> CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))</span><br></code></pre></td></tr></table></figure>
+
+<p>nvme_alloc_queue()函数同时还会下发创建队列命令到controller上，让controller也创建好接收用的队列，本文主要是讲NVMe驱动测，target测就不展开了。</p>
+<h2 id="往SQ队列里添加命令"><a href="#往SQ队列里添加命令" class="headerlink" title="往SQ队列里添加命令"></a>往SQ队列里添加命令</h2><p>NVMe驱动在初始化的时候会注册给块层一个hook集，里面包含了与块层交互的接口，其中的nvme_queue_rq()就是块层将命令下发到驱动层的接口(其他BUS注册的接口不一样)。</p>
+<p>在将块层传入的request转换成nvme_command后，需要调用nvme_submit_cmd()函数将nvme_command加入队列：</p>
+<figure class="highlight c"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><code class="hljs C"><span class="hljs-type">static</span> <span class="hljs-type">void</span> <span class="hljs-title function_">nvme_submit_cmd</span><span class="hljs-params">(<span class="hljs-keyword">struct</span> nvme_queue *nvmeq, <span class="hljs-keyword">struct</span> nvme_command *cmd)</span><br>&#123;<br>	spin_lock(&amp;nvmeq-&gt;sq_lock);<br><br>	<span class="hljs-built_in">memcpy</span>(&amp;nvmeq-&gt;sq_cmds[nvmeq-&gt;sq_tail], cmd, <span class="hljs-keyword">sizeof</span>(*cmd));<br><br>	<span class="hljs-keyword">if</span> (++nvmeq-&gt;sq_tail == nvmeq-&gt;q_depth)<br>		nvmeq-&gt;sq_tail = <span class="hljs-number">0</span>;<br>	<span class="hljs-keyword">if</span> (nvme_dbbuf_update_and_check_event(nvmeq-&gt;sq_tail,<br>			nvmeq-&gt;dbbuf_sq_db, nvmeq-&gt;dbbuf_sq_ei))<br>		writel(nvmeq-&gt;sq_tail, nvmeq-&gt;q_db);<br>	spin_unlock(&amp;nvmeq-&gt;sq_lock);<br>&#125;<br></code></pre></td></tr></table></figure>
+
+<p>第5行：将nvme_command复制到sq_tail指向的队列的尾巴，注意此时是直接拷贝的，并没有判断当前的SQ是否已经满了，为什么？</p>
+<p>因为在块层的硬件队列的队列深度是由NVMe的SQ的队列深度决定的，其最终结果小于SQ的队列深度，具体见blk_mq_alloc_rq_maps()函数，当__blk_mq_alloc_rq_maps()函数分配失败时会将队列深度减半，而队列深度的初始值是NVMe队列的深度减去1。块层在初始化的时候就申请好硬件队列深度个request，然后用一个bitmap来管理，在块层没法合并接收到的bio的时候会通过bitmap申请一个request，如果申请不到则将当前流程挂起等待，直到申请到为止，详见blk_mq_get_tag()函数。</p>
+<p>综上，SQ队列是永远无法注满的，因此也就不需要判断队列是否满了。</p>
+<p>第9，10，11行：在条件满足的时候将tail值写入到队列对应的doorbell寄存器里面通知controller有新的命令到来了请处理。至于这个条件需要一定的PCIe知识，这里先跳过。</p>
+<p>NVMe在将tail写入到nvme_queue对应的doorbell后，controller自己维护着head的值，这样controller就知道要取哪些command了，取完之后将head++。</p>
+<h2 id="处理CQ完成的命令"><a href="#处理CQ完成的命令" class="headerlink" title="处理CQ完成的命令"></a>处理CQ完成的命令</h2><p>controller处理完命令后，生成nvme_completion结构并填入处理结果，然后将nvme_completion存入CQ中。</p>
+<p>之后controller有两种方式能够让host感知到有命令完成：</p>
+<p>一、通过中断</p>
+<p>在初始化阶段，NVMe驱动在创建队列时</p>
+
+                
+              </div>
+            
+            <hr/>
+            <div>
+              <div class="post-metas my-3">
+  
+  
+</div>
+
+
+              
+  
+
+  <div class="license-box my-3">
+    <div class="license-title">
+      <div></div>
+      <div>http://example.com/2023/04/29/nvme/NVMe驱动队列的原理与源码分析/</div>
+    </div>
+    <div class="license-meta">
+      
+        <div class="license-meta-item">
+          <div>作者</div>
+          <div>John Doe</div>
+        </div>
+      
+      
+        <div class="license-meta-item license-meta-date">
+          <div>发布于</div>
+          <div>2023年4月29日</div>
+        </div>
+      
+      
+      
+        <div class="license-meta-item">
+          <div>许可协议</div>
+          <div>
+            
+              
+              
+                <a target="_blank" href="https://creativecommons.org/licenses/by/4.0/">
+                  <span class="hint--top hint--rounded" aria-label="BY - 署名">
+                    <i class="iconfont icon-by"></i>
+                  </span>
+                </a>
+              
+            
+          </div>
+        </div>
+      
+    </div>
+    <div class="license-icon iconfont"></div>
+  </div>
+
+
+
+              
+                <div class="post-prevnext my-3">
+                  <article class="post-prev col-6">
+                    
+                    
+                  </article>
+                  <article class="post-next col-6">
+                    
+                    
+                      <a href="/2023/04/29/ext4/ext4%20%20%E5%9D%97%E5%88%86%E9%85%8D%E6%9C%BA%E5%88%B6%E5%8F%8A%E6%BA%90%E7%A0%81%E5%88%86%E6%9E%90/" title="">
+                        <span class="hidden-mobile"></span>
+                        <span class="visible-mobile">下一篇</span>
+                        <i class="iconfont icon-arrowright"></i>
+                      </a>
+                    
+                  </article>
+                </div>
+              
+            </div>
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-col d-none d-lg-block col-lg-2">
+      
+  <aside class="sidebar" style="margin-left: -1rem">
+    <div id="toc">
+  <p class="toc-header">
+    <i class="iconfont icon-list"></i>
+    <span>目录</span>
+  </p>
+  <div class="toc-body" id="toc-body"></div>
+</div>
+
+
+
+  </aside>
+
+
+    </div>
+  </div>
+</div>
+
+
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+
+
+
+
+    
+
+    
+      <a id="scroll-top-button" aria-label="TOP" href="#" role="button">
+        <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+      </a>
+    
+
+    
+      <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
+     aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v" for="local-search-input">关键词</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+    
+
+    
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+  
+    <div class="footer-content">
+       <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a> <i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a> 
+    </div>
+  
+  
+  
+  
+</div>
+
+  </footer>
+
+  <!-- Scripts -->
+  
+  <script  src="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.js" ></script>
+  <link  rel="stylesheet" href="https://lib.baomitu.com/nprogress/0.2.0/nprogress.min.css" />
+
+  <script>
+    NProgress.configure({"showSpinner":false,"trickleSpeed":100})
+    NProgress.start()
+    window.addEventListener('load', function() {
+      NProgress.done();
+    })
+  </script>
+
+
+<script  src="https://lib.baomitu.com/jquery/3.6.0/jquery.min.js" ></script>
+<script  src="https://lib.baomitu.com/twitter-bootstrap/4.6.1/js/bootstrap.min.js" ></script>
+<script  src="/js/events.js" ></script>
+<script  src="/js/plugins.js" ></script>
+
+
+  <script  src="https://lib.baomitu.com/typed.js/2.0.12/typed.min.js" ></script>
+  <script>
+    (function (window, document) {
+      var typing = Fluid.plugins.typing;
+      var subtitle = document.getElementById('subtitle');
+      if (!subtitle || !typing) {
+        return;
+      }
+      var text = subtitle.getAttribute('data-typed-text');
+      
+        typing(text);
+      
+    })(window, document);
+  </script>
+
+
+
+
+  
+    <script  src="/js/img-lazyload.js" ></script>
+  
+
+
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/tocbot/4.18.2/tocbot.min.js', function() {
+    var toc = jQuery('#toc');
+    if (toc.length === 0 || !window.tocbot) { return; }
+    var boardCtn = jQuery('#board-ctn');
+    var boardTop = boardCtn.offset().top;
+
+    window.tocbot.init(Object.assign({
+      tocSelector     : '#toc-body',
+      contentSelector : '.markdown-body',
+      linkClass       : 'tocbot-link',
+      activeLinkClass : 'tocbot-active-link',
+      listClass       : 'tocbot-list',
+      isCollapsedClass: 'tocbot-is-collapsed',
+      collapsibleClass: 'tocbot-is-collapsible',
+      scrollSmooth    : true,
+      includeTitleTags: true,
+      headingsOffset  : -boardTop,
+    }, CONFIG.toc));
+    if (toc.find('.toc-list-item').length > 0) {
+      toc.css('visibility', 'visible');
+    }
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('tocbot' in window) {
+        tocbot.refresh();
+        var toc = jQuery('#toc');
+        if (toc.length === 0 || !tocbot) {
+          return;
+        }
+        if (toc.find('.toc-list-item').length > 0) {
+          toc.css('visibility', 'visible');
+        }
+      }
+    });
+  });
+</script>
+
+
+  <script src=https://lib.baomitu.com/clipboard.js/2.0.11/clipboard.min.js></script>
+
+  <script>Fluid.plugins.codeWidget();</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/anchor-js/4.3.1/anchor.min.js', function() {
+    window.anchors.options = {
+      placement: CONFIG.anchorjs.placement,
+      visible  : CONFIG.anchorjs.visible
+    };
+    if (CONFIG.anchorjs.icon) {
+      window.anchors.options.icon = CONFIG.anchorjs.icon;
+    }
+    var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+    var res = [];
+    for (var item of el) {
+      res.push('.markdown-body > ' + item.trim());
+    }
+    if (CONFIG.anchorjs.placement === 'left') {
+      window.anchors.options.class = 'anchorjs-link-left';
+    }
+    window.anchors.add(res.join(', '));
+
+    Fluid.events.registerRefreshCallback(function() {
+      if ('anchors' in window) {
+        anchors.removeAll();
+        var el = (CONFIG.anchorjs.element || 'h1,h2,h3,h4,h5,h6').split(',');
+        var res = [];
+        for (var item of el) {
+          res.push('.markdown-body > ' + item.trim());
+        }
+        if (CONFIG.anchorjs.placement === 'left') {
+          anchors.options.class = 'anchorjs-link-left';
+        }
+        anchors.add(res.join(', '));
+      }
+    });
+  });
+</script>
+
+
+  
+<script>
+  Fluid.utils.createScript('https://lib.baomitu.com/fancybox/3.5.7/jquery.fancybox.min.js', function() {
+    Fluid.plugins.fancyBox();
+  });
+</script>
+
+
+  <script>Fluid.plugins.imageCaption();</script>
+
+  <script  src="/js/local-search.js" ></script>
+
+
+
+
+
+<!-- 主题的启动项，将它保持在最底部 -->
+<!-- the boot of the theme, keep it at the bottom -->
+<script  src="/js/boot.js" ></script>
+
+
+  
+
+  <noscript>
+    <div class="noscript-warning">博客在允许 JavaScript 运行的环境下浏览效果更佳</div>
+  </noscript>
+</body>
+</html>
